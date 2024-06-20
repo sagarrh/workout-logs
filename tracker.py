@@ -1,11 +1,11 @@
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, filedialog
 from openpyxl import Workbook, load_workbook
 import matplotlib.pyplot as plt
+import pytesseract
+from PIL import Image
+import re
 import os
-import requests
-import json
-from datetime import datetime
 
 # File name for storing data
 EXCEL_FILE = 'gym_progress.xlsx'
@@ -25,105 +25,98 @@ def save_data(date, exercise, weight, sets, reps, distance, duration):
     wb.save(EXCEL_FILE)
     messagebox.showinfo("Data Saved", "Your workout data has been saved.")
 
-# Generate graph of progress
-def generate_graph():
+# Calculate statistics
+def calculate_statistics():
     wb = load_workbook(EXCEL_FILE)
     ws = wb.active
     
-    exercises = {}
+    total_distance = 0
+    total_duration = 0
+    run_count = 0
     
     for row in ws.iter_rows(min_row=2, values_only=True):
         date, exercise, weight, sets, reps, distance, duration = row
-        if exercise not in exercises:
-            exercises[exercise] = []
-        exercises[exercise].append((date, weight, distance, duration))
+        if exercise in ['Running', 'Walking', 'Cycling']:
+            total_distance += distance if distance else 0
+            if duration:
+                h, m, s = map(int, duration.split(':'))
+                total_duration += h * 3600 + m * 60 + s
+            run_count += 1
     
-    for exercise, data in exercises.items():
-        dates, weights, distances, durations = zip(*data)
-        if exercise in ['Walking', 'Cycling']:
-            plt.plot(dates, distances, marker='o', label=f'{exercise} Distance')
-        else:
-            plt.plot(dates, weights, marker='o', label=f'{exercise} Weight')
-    
-    plt.xlabel('Date')
-    plt.ylabel('Progress')
-    plt.title('Workout Progress Over Time')
-    plt.legend()
-    plt.show()
+    if run_count > 0:
+        average_pace = total_duration / total_distance if total_distance > 0 else 0
+        stats_label.config(text=f"You have run a total of {total_distance:.2f} miles so far. Keep it up!\n"
+                                f"Average pace: {average_pace/60:.2f} min/mile\n"
+                                f"Total time: {total_duration//3600}h {(total_duration%3600)//60}m {total_duration%60}s")
+    else:
+        stats_label.config(text="No running data available.")
 
-# Fetch data from Runkeeper API
-def fetch_runkeeper_data(token):
-    headers = {'Authorization': f'Bearer {token}'}
-    activities = requests.get('https://api.runkeeper.com/fitnessActivities', headers=headers).json()
-    wb = load_workbook(EXCEL_FILE)
-    ws = wb.active
+# Extract data from handwritten notes using OCR
+def process_ocr_image(image_path):
+    text = pytesseract.image_to_string(Image.open(image_path))
+    entries = re.findall(r'(\d{2}/\d{2}/\d{2}).*?(Running|Walking|Cycling|Gym).*?(\d+\.?\d*).*?(\d+:\d+:\d+)', text, re.DOTALL)
     
-    for activity in activities['items']:
-        date = datetime.strptime(activity['start_time'], '%a, %d %b %Y %H:%M:%S').strftime('%Y-%m-%d')
-        exercise = activity['type']
-        distance = activity['total_distance']
-        duration = activity['duration']
-        ws.append([date, exercise, None, None, None, distance, duration])
+    for entry in entries:
+        date, exercise, distance, duration = entry
+        save_data(date, exercise, None, None, None, float(distance), duration)
     
-    wb.save(EXCEL_FILE)
-    messagebox.showinfo("Data Downloaded", "Your Runkeeper data has been downloaded.")
+    messagebox.showinfo("Data Processed", "Handwritten data has been processed and saved.")
 
 # GUI
 root = tk.Tk()
 root.title("Gym Progress Tracker")
 
+# Left frame for adding data
+left_frame = tk.Frame(root, padx=20, pady=20, bg="#5b9aa0")
+left_frame.grid(row=0, column=0, padx=10, pady=10, sticky="n")
+
+tk.Label(left_frame, text="Add Data", font=("Arial", 16, "bold"), bg="#5b9aa0", fg="white").grid(row=0, columnspan=2)
+tk.Label(left_frame, text="Enter info below:", font=("Arial", 12), bg="#5b9aa0", fg="white").grid(row=1, columnspan=2)
+
 # Date
-tk.Label(root, text="Date (YYYY-MM-DD)").grid(row=0, column=0)
-date_entry = tk.Entry(root)
-date_entry.grid(row=0, column=1)
+tk.Label(left_frame, text="Date", bg="#5b9aa0", fg="white").grid(row=2, column=0, sticky="e")
+date_entry = tk.Entry(left_frame)
+date_entry.grid(row=2, column=1)
 
-# Exercise
-tk.Label(root, text="Exercise").grid(row=1, column=0)
-exercise_entry = tk.Entry(root)
-exercise_entry.grid(row=1, column=1)
+# Distance
+tk.Label(left_frame, text="Distance", bg="#5b9aa0", fg="white").grid(row=3, column=0, sticky="e")
+distance_entry = tk.Entry(left_frame)
+distance_entry.grid(row=3, column=1)
 
-# Weight
-tk.Label(root, text="Weight").grid(row=2, column=0)
-weight_entry = tk.Entry(root)
-weight_entry.grid(row=2, column=1)
+# Duration
+tk.Label(left_frame, text="Duration", bg="#5b9aa0", fg="white").grid(row=4, column=0, sticky="e")
+duration_entry = tk.Entry(left_frame)
+duration_entry.grid(row=4, column=1)
 
-# Sets
-tk.Label(root, text="Sets").grid(row=3, column=0)
-sets_entry = tk.Entry(root)
-sets_entry.grid(row=3, column=1)
+# Submit Button
+submit_button = tk.Button(left_frame, text="Submit", command=lambda: save_data(
+    date_entry.get(), 'Running', None, None, None, float(distance_entry.get()), duration_entry.get()))
+submit_button.grid(row=5, columnspan=2, pady=10)
 
-# Reps
-tk.Label(root, text="Reps").grid(row=4, column=0)
-reps_entry = tk.Entry(root)
-reps_entry.grid(row=4, column=1)
+# Right frame for statistics
+right_frame = tk.Frame(root, padx=20, pady=20, bg="#5b9aa0")
+right_frame.grid(row=0, column=1, padx=10, pady=10, sticky="n")
 
-# Distance (for walking/cycling)
-tk.Label(root, text="Distance (km)").grid(row=5, column=0)
-distance_entry = tk.Entry(root)
-distance_entry.grid(row=5, column=1)
+tk.Label(right_frame, text="See Running Statistics", font=("Arial", 16, "bold"), bg="#5b9aa0", fg="white").grid(row=0, columnspan=2)
+tk.Label(right_frame, text="Analysis options:", font=("Arial", 12), bg="#5b9aa0", fg="white").grid(row=1, columnspan=2)
 
-# Duration (for walking/cycling)
-tk.Label(root, text="Duration (min)").grid(row=6, column=0)
-duration_entry = tk.Entry(root)
-duration_entry.grid(row=6, column=1)
+# Analysis Buttons
+tk.Button(right_frame, text="Total Distance", command=calculate_statistics).grid(row=2, column=0, padx=5, pady=5)
+tk.Button(right_frame, text="Average Pace", command=calculate_statistics).grid(row=2, column=1, padx=5, pady=5)
+tk.Button(right_frame, text="Total Time", command=calculate_statistics).grid(row=3, columnspan=2, padx=5, pady=5)
 
-# Save Button
-save_button = tk.Button(root, text="Save", command=lambda: save_data(
-    date_entry.get(), exercise_entry.get(), weight_entry.get(), 
-    sets_entry.get(), reps_entry.get(), distance_entry.get(), duration_entry.get()))
-save_button.grid(row=7, column=0, columnspan=2)
+# Statistics Label
+stats_label = tk.Label(right_frame, text="Stats will be displayed here.", bg="#5b9aa0", fg="white", justify="left", font=("Arial", 12))
+stats_label.grid(row=4, columnspan=2, pady=10)
 
-# Generate Graph Button
-graph_button = tk.Button(root, text="Generate Graph", command=generate_graph)
-graph_button.grid(row=8, column=0, columnspan=2)
+# Upload and process handwritten notes
+def upload_image():
+    file_path = filedialog.askopenfilename()
+    if file_path:
+        process_ocr_image(file_path)
 
-# Runkeeper API Token Entry
-tk.Label(root, text="Runkeeper API Token").grid(row=9, column=0)
-token_entry = tk.Entry(root)
-token_entry.grid(row=9, column=1)
-
-# Fetch Data Button
-fetch_button = tk.Button(root, text="Fetch Runkeeper Data", command=lambda: fetch_runkeeper_data(token_entry.get()))
-fetch_button.grid(row=10, column=0, columnspan=2)
+# Upload Image Button
+upload_button = tk.Button(left_frame, text="Upload Handwritten Notes", command=upload_image)
+upload_button.grid(row=6, columnspan=2, pady=10)
 
 root.mainloop()
